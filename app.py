@@ -10,12 +10,11 @@ from __future__ import annotations
 
 import csv
 import json
-import os
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 DATA_DIR = Path("data")
 CSV_PATH = DATA_DIR / "notices.csv"
