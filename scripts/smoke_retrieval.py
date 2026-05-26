@@ -8,8 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.answerer import SAFE_UNKNOWN_ANSWER, answer_question
-from src.rag import NoticeRetriever, load_records
+from src.answerer import SAFE_UNKNOWN_ANSWER, answer_question  # noqa: E402
+from src.rag import NoticeRetriever, load_records  # noqa: E402
 
 DATASET = ROOT / "data" / "notices.jsonl"
 QUESTIONS = [
