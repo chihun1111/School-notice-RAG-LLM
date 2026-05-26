@@ -135,7 +135,12 @@ def fallback_retrieve(question: str, rows: list[dict[str, str]], limit: int = 5)
 def retrieve_sources(question: str, rows: list[dict[str, str]]) -> list[Source]:
     """Prefer backend RAG modules, falling back to local keyword retrieval."""
     try:
-        from src.rag import HybridRetriever, RAGRetriever, search_notices  # type: ignore
+        import importlib
+
+        rag_module = importlib.import_module("src.rag")
+        search_notices = getattr(rag_module, "search_notices", None)
+        HybridRetriever = getattr(rag_module, "HybridRetriever", None)
+        RAGRetriever = getattr(rag_module, "RAGRetriever", None)
     except Exception:
         HybridRetriever = RAGRetriever = search_notices = None  # type: ignore
 
@@ -170,7 +175,11 @@ def build_extractive_answer(question: str, sources: list[Source]) -> str:
 def build_answer(question: str, rows: list[dict[str, str]]) -> tuple[str, list[Source]]:
     sources = retrieve_sources(question, rows)
     try:
-        from src.answerer import answer_question, generate_answer  # type: ignore
+        import importlib
+
+        answerer_module = importlib.import_module("src.answerer")
+        answer_question = getattr(answerer_module, "answer_question", None)
+        generate_answer = getattr(answerer_module, "generate_answer", None)
     except Exception:
         answer_question = generate_answer = None  # type: ignore
 
