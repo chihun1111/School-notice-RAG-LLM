@@ -58,7 +58,7 @@ class DatasetAndAppBehaviorTests(unittest.TestCase):
         <table class="board-list-table"><tbody>
           <tr>
             <td class="subject"><a href="/kor/CMS/Board/Board.do?mode=view&mCode=MN284&mgr_seq=1&board_seq=9">[장학] 국가장학금 신청 안내</a></td>
-            <td class="date">2026-05-20</td><td class="writer">학생처</td>
+            <td class="cate">[장학]</td><td class="date">2026-05-20</td><td class="writer">학생처</td>
           </tr>
         </tbody></table>
         """
