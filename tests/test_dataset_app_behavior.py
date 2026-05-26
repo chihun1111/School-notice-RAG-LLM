@@ -86,6 +86,9 @@ class DatasetAndAppBehaviorTests(unittest.TestCase):
         answer, answer_sources = build_answer("장학금 신청", VALID_RECORDS)
         self.assertIn("장학금", answer)
         self.assertTrue(answer_sources)
+        unknown, unknown_sources = build_answer("기숙사 고양이 입양", VALID_RECORDS)
+        self.assertTrue(unknown.startswith("수집된 공지 데이터에서 확인되지 않음"))
+        self.assertEqual(unknown_sources, [])
 
     def test_run_dataset_refresh_is_explicit_entrypoint_only(self):
         # The app exposes refresh as a separate callable; answer construction above

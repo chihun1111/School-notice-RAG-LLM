@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -118,6 +119,10 @@ def parse_list_page(html: str, page_url: str, board: BoardConfig) -> list[dict[s
         date = clean_text(row.select_one("td.date").get_text(" ") if row.select_one("td.date") else "")
         writer = clean_text(row.select_one("td.writer").get_text(" ") if row.select_one("td.writer") else "")
         url = urljoin(page_url, link.get("href", ""))
+        bracketed = re.match(r"^\[([^\]]+)\]\s*(.+)$", title)
+        if bracketed:
+            category = category or clean_text(bracketed.group(1))
+            title = clean_text(bracketed.group(2))
         title = title.replace(f"[{category}]", "", 1).strip() if category else title
         if not title or "mode=view" not in url:
             continue

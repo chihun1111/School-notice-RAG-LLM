@@ -10,6 +10,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -140,6 +141,12 @@ class NoticeRetriever:
         return cls(load_records(path), min_score=min_score)
 
     def _init_tfidf(self) -> None:
+        # Keep the competition demo deterministic and fast by default. Some
+        # local Python/scikit-learn combinations can spend a long time inside
+        # native imports, so TF-IDF is an explicit opt-in optimization rather
+        # than a requirement for answering from the local dataset.
+        if os.getenv("KD_NOTICE_ENABLE_TFIDF") != "1":
+            return
         try:
             from sklearn.feature_extraction.text import TfidfVectorizer
         except Exception:

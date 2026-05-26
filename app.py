@@ -29,6 +29,17 @@ RECOMMENDED_QUESTIONS = [
     "최근 공지 중 중요한 내용을 알려줘",
 ]
 REQUIRED_FIELDS = ["title", "category", "date", "url", "source_board", "content_or_snippet"]
+GENERIC_QUERY_TOKENS = {
+    "공지",
+    "공지가",
+    "관련",
+    "알려줘",
+    "요약해줘",
+    "최근",
+    "있어",
+    "있나요",
+    "찾아줘",
+}
 
 
 @dataclass(frozen=True)
@@ -103,7 +114,7 @@ def run_dataset_refresh() -> tuple[bool, str]:
 
 def _keyword_tokens(query: str) -> set[str]:
     normalized = "".join(ch.lower() if ch.isalnum() else " " for ch in query)
-    return {token for token in normalized.split() if len(token) >= 2}
+    return {token for token in normalized.split() if len(token) >= 2 and token not in GENERIC_QUERY_TOKENS}
 
 
 def fallback_retrieve(question: str, rows: list[dict[str, str]], limit: int = 5) -> list[Source]:
@@ -133,6 +144,7 @@ def fallback_retrieve(question: str, rows: list[dict[str, str]], limit: int = 5)
 
 def retrieve_sources(question: str, rows: list[dict[str, str]]) -> list[Source]:
     """Prefer backend RAG modules, falling back to local keyword retrieval."""
+    backend_available = False
     try:
         import importlib
 
@@ -140,13 +152,14 @@ def retrieve_sources(question: str, rows: list[dict[str, str]]) -> list[Source]:
         search_notices = getattr(rag_module, "search_notices", None)
         HybridRetriever = getattr(rag_module, "HybridRetriever", None)
         RAGRetriever = getattr(rag_module, "RAGRetriever", None)
+        backend_available = any(item is not None for item in (search_notices, HybridRetriever, RAGRetriever))
     except Exception:
         HybridRetriever = RAGRetriever = search_notices = None  # type: ignore
 
     candidates: Any = None
     try:
         if search_notices is not None:
-            candidates = search_notices(question, rows, top_k=5)
+            candidates = search_notices(rows, question, top_k=5)
         elif HybridRetriever is not None:
             candidates = HybridRetriever(rows).search(question, top_k=5)
         elif RAGRetriever is not None:
@@ -154,8 +167,10 @@ def retrieve_sources(question: str, rows: list[dict[str, str]]) -> list[Source]:
     except Exception:
         candidates = None
 
-    if candidates:
+    if candidates is not None:
         return [_record_to_source(dict(item)) for item in candidates]
+    if backend_available:
+        return []
     return fallback_retrieve(question, rows)
 
 
