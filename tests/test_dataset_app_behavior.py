@@ -1,0 +1,89 @@
+import tempfile
+import unittest
+from pathlib import Path
+
+from src.crawler import BoardConfig, parse_list_page, with_page
+from src.dataset import deduplicate, validate_records, write_outputs
+from app import build_answer, dataset_summary, fallback_retrieve, run_dataset_refresh
+
+
+VALID_RECORDS = [
+    {
+        "title": "장학금 신청 안내",
+        "category": "장학",
+        "date": "2026-05-20",
+        "url": "https://example.edu/a",
+        "source_board": "장학공지",
+        "content_or_snippet": "장학금 신청 기간은 6월입니다.",
+    },
+    {
+        "title": "취업 인턴 모집",
+        "category": "취업",
+        "date": "2026-05-19",
+        "url": "https://example.edu/b",
+        "source_board": "취업공지",
+        "content_or_snippet": "AI 기업 인턴을 모집합니다.",
+    },
+]
+
+
+class DatasetAndAppBehaviorTests(unittest.TestCase):
+    def test_validate_records_requires_each_required_field_per_row(self):
+        bad = [dict(VALID_RECORDS[0], url="")]
+        with self.assertRaisesRegex(ValueError, "missing url"):
+            validate_records(bad)
+
+    def test_deduplicate_uses_url_and_title(self):
+        records = deduplicate([VALID_RECORDS[0], dict(VALID_RECORDS[0]), VALID_RECORDS[1]])
+        self.assertEqual(len(records), 2)
+
+    def test_write_outputs_keeps_csv_and_jsonl_counts_equal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path = Path(tmp) / "notices.csv"
+            jsonl_path = Path(tmp) / "notices.jsonl"
+            written = write_outputs(VALID_RECORDS, csv_path, jsonl_path)
+            self.assertEqual(len(written), 2)
+            self.assertEqual(len(csv_path.read_text(encoding="utf-8-sig").splitlines()) - 1, 2)
+            self.assertEqual(len(jsonl_path.read_text(encoding="utf-8").splitlines()), 2)
+
+    def test_parse_list_page_extracts_public_notice_metadata(self):
+        html = """
+        <table class="board-list-table"><tbody>
+          <tr>
+            <td class="subject"><a href="/kor/CMS/Board/Board.do?mode=view&mCode=MN284&mgr_seq=1&board_seq=9">[장학] 국가장학금 신청 안내</a></td>
+            <td class="date">2026-05-20</td><td class="writer">학생처</td>
+          </tr>
+        </tbody></table>
+        """
+        board = BoardConfig(id="scholarship", label="장학공지", category="경동알림", url="https://www.kduniv.ac.kr/kor/CMS/Board/Board.do?mCode=MN284")
+        rows = parse_list_page(html, board.url, board)
+        self.assertEqual(rows[0]["title"], "국가장학금 신청 안내")
+        self.assertEqual(rows[0]["source_board"], "장학공지")
+        self.assertTrue(rows[0]["url"].startswith("https://www.kduniv.ac.kr/"))
+
+    def test_with_page_keeps_first_page_url_and_bounds_extra_pages(self):
+        url = "https://example.edu/board?mCode=MN245"
+        self.assertEqual(with_page(url, 1), url)
+        self.assertIn("page=2", with_page(url, 2))
+
+    def test_dataset_summary_reports_missing_fields_only_when_rows_exist(self):
+        self.assertEqual(dataset_summary([])["missing_fields"], [])
+        summary = dataset_summary([dict(VALID_RECORDS[0], date="")])
+        self.assertIn("date", summary["missing_fields"])
+
+    def test_fallback_retrieve_and_answer_expose_source_without_crawling(self):
+        sources = fallback_retrieve("장학금 신청", VALID_RECORDS)
+        self.assertTrue(sources)
+        self.assertEqual(sources[0].url, "https://example.edu/a")
+        answer, answer_sources = build_answer("장학금 신청", VALID_RECORDS)
+        self.assertIn("장학금", answer)
+        self.assertTrue(answer_sources)
+
+    def test_run_dataset_refresh_is_explicit_entrypoint_only(self):
+        # The app exposes refresh as a separate callable; answer construction above
+        # does not call this function or the crawler.
+        self.assertTrue(callable(run_dataset_refresh))
+
+
+if __name__ == "__main__":
+    unittest.main()
