@@ -12,6 +12,11 @@ def _clean(value: Any) -> str:
     return "" if value is None else str(value).strip()
 
 
+def _clip(value: Any, max_chars: int = 300) -> str:
+    text = _clean(value)
+    return text if len(text) <= max_chars else text[:max_chars].rstrip() + "…"
+
+
 def _source_line(source: Mapping[str, Any]) -> str:
     title = _clean(source.get("title")) or _clean(source.get("source_board")) or "제목 없음"
     date = _clean(source.get("date")) or "날짜 미상"
@@ -55,7 +60,7 @@ def build_extractive_answer(query: str, results: Sequence[Mapping[str, Any]], ma
 
     answer = "\n".join(
         [
-            f"질문: {query}",
+            f"질문: {_clip(query)}",
             "수집된 공지 데이터 기준으로 확인한 내용입니다.",
             " ".join(summary_bits),
             "\n출처:\n" + "\n".join(_source_line(source) for source in selected),
@@ -89,7 +94,7 @@ def build_llm_prompt(query: str, results: Sequence[Mapping[str, Any]]) -> str:
         [
             "당신은 학교 공지 RAG 챗봇입니다. 아래 근거에 없는 내용은 추측하지 마세요.",
             "답변은 한국어로 작성하고, 불확실하면 '수집된 공지 데이터에서 확인되지 않음'이라고 말하세요.",
-            f"질문: {query}",
+            f"질문: {_clip(query, max_chars=500)}",
             "근거:\n" + "\n\n".join(evidence_blocks),
         ]
     )

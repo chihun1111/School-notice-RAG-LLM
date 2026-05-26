@@ -59,6 +59,11 @@ def _as_text(value: Any) -> str:
     return str(value).strip()
 
 
+def _clip_text(value: Any, max_chars: int = 300) -> str:
+    text = _as_text(value)
+    return text if len(text) <= max_chars else text[:max_chars].rstrip() + "…"
+
+
 def _record_to_source(record: dict[str, Any]) -> Source:
     return Source(
         title=_as_text(record.get("title")) or "제목 없음",
@@ -180,7 +185,7 @@ def build_extractive_answer(question: str, sources: list[Source]) -> str:
     lead = sources[0]
     snippet = lead.snippet[:220] + ("…" if len(lead.snippet) > 220 else "")
     return (
-        f"질문 '{question}'와 관련해 가장 근거가 높은 공지는 '{lead.title}'입니다. "
+        f"질문 '{_clip_text(question)}'와 관련해 가장 근거가 높은 공지는 '{lead.title}'입니다. "
         f"작성일은 {lead.date or '확인 필요'}이며, {lead.source_board or lead.category or '공지 게시판'}에서 확인된 내용입니다. "
         f"근거: {snippet or '상세 내용은 원문 링크를 확인하세요.'}"
     )

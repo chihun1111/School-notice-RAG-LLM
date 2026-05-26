@@ -71,6 +71,16 @@ class RagAnswererTests(unittest.TestCase):
         self.assertIn("AI 기업 현장실습", prompt)
         self.assertNotIn("국가장학금", prompt)
 
+    def test_oversized_question_is_clipped_in_answer_and_prompt(self):
+        oversized = "A" * 12000 + " 장학금"
+        results = search_notices(RECORDS, "장학금", top_k=1)
+        payload = answer_question(oversized, results)
+        self.assertLess(len(payload["answer"]), 2500)
+        self.assertIn("…", payload["answer"])
+        prompt = build_llm_prompt(oversized, results)
+        self.assertLess(len(prompt), 2500)
+        self.assertIn("…", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()
