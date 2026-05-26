@@ -1,0 +1,32 @@
+# Public KD University notice boards approved for this demo crawler.
+# Runtime chat must not crawl these URLs automatically; refresh explicitly via scripts/build_dataset.py.
+boards:
+  - id: general
+    label: 일반공지
+    category: 경동알림
+    url: https://www.kduniv.ac.kr/kor/CMS/Board/Board.do?mCode=MN245
+  - id: academic
+    label: 학사공지
+    category: 경동알림
+    url: https://www.kduniv.ac.kr/kor/CMS/Board/Board.do?mCode=MN246
+  - id: scholarship
+    label: 장학공지
+    category: 경동알림
+    url: https://www.kduniv.ac.kr/kor/CMS/Board/Board.do?mCode=MN284
+  - id: center
+    label: 센터공지
+    category: 경동알림
+    url: https://www.kduniv.ac.kr/kor/CMS/Board/Board.do?mCode=MN285
+  - id: career
+    label: 취업공지
+    category: 경동알림
+    url: https://www.kduniv.ac.kr/kor/CMS/Board/Board.do?mCode=MN286
+  - id: recruiting
+    label: 채용공지
+    category: 경동알림
+    url: https://www.kduniv.ac.kr/kor/CMS/Board/Board.do?mCode=MN287
+crawler:
+  max_pages_per_board: 1
+  request_timeout_seconds: 12
+  polite_delay_seconds: 0.25
+  user_agent: "KDUniversityNoticeRAGDemo/0.1 (+local competition demo; public pages only)"
