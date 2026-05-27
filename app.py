@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 DATA_DIR = Path("data")
+CONFIG_PATH = Path("config") / "boards.yaml"
 CSV_PATH = DATA_DIR / "notices.csv"
 JSONL_PATH = DATA_DIR / "notices.jsonl"
 BUILD_SCRIPT = Path("scripts") / "build_dataset.py"
@@ -102,15 +103,31 @@ def dataset_summary(rows: list[dict[str, str]]) -> dict[str, Any]:
     }
 
 
-def run_dataset_refresh() -> tuple[bool, str]:
+def configured_max_pages(default: int = 3) -> int:
+    """Read the configured board-page crawl limit for the refresh UI."""
+    try:
+        import yaml
+
+        with CONFIG_PATH.open(encoding="utf-8") as handle:
+            config = yaml.safe_load(handle) or {}
+        value = int((config.get("crawler") or {}).get("max_pages_per_board", default))
+    except Exception:
+        value = default
+    return max(1, value)
+
+
+def run_dataset_refresh(max_pages: int | None = None) -> tuple[bool, str]:
     """Run the explicit dataset builder; chat requests never call this."""
     if not BUILD_SCRIPT.exists():
         return False, f"데이터셋 빌드 스크립트를 찾을 수 없습니다: {BUILD_SCRIPT}"
+    command = [sys.executable, str(BUILD_SCRIPT)]
+    if max_pages is not None:
+        command.extend(["--max-pages", str(max(1, int(max_pages)))])
     completed = subprocess.run(
-        [sys.executable, str(BUILD_SCRIPT)],
+        command,
         text=True,
         capture_output=True,
-        timeout=180,
+        timeout=600,
         check=False,
     )
     output = "\n".join(part for part in [completed.stdout, completed.stderr] if part).strip()
@@ -191,7 +208,21 @@ def build_extractive_answer(question: str, sources: list[Source]) -> str:
     )
 
 
-def build_answer(question: str, rows: list[dict[str, str]]) -> tuple[str, list[Source]]:
+def build_answer(
+    question: str,
+    rows: list[dict[str, str]],
+    *,
+    use_llm: bool | None = None,
+    llm_provider: str | None = None,
+    ollama_model: str | None = None,
+    ollama_base_url: str | None = None,
+    ollama_timeout: float | None = None,
+    ollama_num_predict: int | None = None,
+    gemini_model: str | None = None,
+    gemini_api_key: str | None = None,
+    gemini_timeout: float | None = None,
+    gemini_max_output_tokens: int | None = None,
+) -> tuple[str, list[Source]]:
     sources = retrieve_sources(question, rows)
     try:
         import importlib
@@ -206,7 +237,20 @@ def build_answer(question: str, rows: list[dict[str, str]]) -> tuple[str, list[S
         if answer_fn is None:
             continue
         try:
-            payload = answer_fn(question=question, sources=[source.__dict__ for source in sources])
+            payload = answer_fn(
+                query=question,
+                retrieved_results=[source.__dict__ for source in sources],
+                use_llm=use_llm,
+                llm_provider=llm_provider,
+                ollama_model=ollama_model,
+                ollama_base_url=ollama_base_url,
+                ollama_timeout=ollama_timeout,
+                ollama_num_predict=ollama_num_predict,
+                gemini_model=gemini_model,
+                gemini_api_key=gemini_api_key,
+                gemini_timeout=gemini_timeout,
+                gemini_max_output_tokens=gemini_max_output_tokens,
+            )
             if isinstance(payload, dict):
                 answer = _as_text(payload.get("answer"))
                 payload_sources = payload.get("sources") or payload.get("evidence")
@@ -220,6 +264,50 @@ def build_answer(question: str, rows: list[dict[str, str]]) -> tuple[str, list[S
             continue
 
     return build_extractive_answer(question, sources), sources
+
+
+def render_thinking_motion(target: Any) -> None:
+    """Render a lightweight animated thinking indicator while RAG runs."""
+    target.markdown(
+        """
+        <style>
+          .thinking-card {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.65rem;
+            padding: 0.75rem 1rem;
+            margin: 0.25rem 0 0.75rem 0;
+            border-radius: 999px;
+            background: linear-gradient(90deg, rgba(79, 70, 229, 0.10), rgba(14, 165, 233, 0.12));
+            border: 1px solid rgba(79, 70, 229, 0.18);
+            color: #1f2937;
+            font-weight: 600;
+          }
+          .thinking-dots {
+            display: inline-flex;
+            gap: 0.25rem;
+          }
+          .thinking-dots span {
+            width: 0.42rem;
+            height: 0.42rem;
+            border-radius: 999px;
+            background: #4f46e5;
+            animation: thinking-bounce 0.95s infinite ease-in-out;
+          }
+          .thinking-dots span:nth-child(2) { animation-delay: 0.14s; background: #2563eb; }
+          .thinking-dots span:nth-child(3) { animation-delay: 0.28s; background: #0891b2; }
+          @keyframes thinking-bounce {
+            0%, 80%, 100% { transform: translateY(0); opacity: 0.45; }
+            40% { transform: translateY(-0.32rem); opacity: 1; }
+          }
+        </style>
+        <div class="thinking-card" role="status" aria-live="polite">
+          <span>근거 검색하고 생각 중</span>
+          <span class="thinking-dots"><span></span><span></span><span></span></span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_source_card(st: Any, source: Source, index: int) -> None:
@@ -252,12 +340,130 @@ def render_app() -> None:
         st.write(f"JSONL: {'있음' if summary['jsonl_exists'] else '없음'}")
         if summary["missing_fields"]:
             st.warning("누락 필드: " + ", ".join(summary["missing_fields"]))
+        crawl_pages = st.number_input(
+            "보드별 크롤링 페이지 수",
+            min_value=1,
+            max_value=10,
+            value=configured_max_pages(),
+            step=1,
+            help="데이터셋 새로고침 때만 적용됩니다. 채팅 중에는 크롤링하지 않습니다.",
+        )
         if st.button("데이터셋 새로고침", help="명시적으로 scripts/build_dataset.py를 실행합니다."):
             with st.spinner("공지 데이터셋을 갱신하는 중..."):
-                ok, output = run_dataset_refresh()
+                ok, output = run_dataset_refresh(max_pages=int(crawl_pages))
             (st.success if ok else st.error)("데이터셋 빌드 완료" if ok else "데이터셋 빌드 실패")
             st.code(output[-4000:] if output else "no output")
             st.rerun()
+
+        st.divider()
+        st.header("AI 답변 생성")
+        use_llm = False
+        llm_provider = None
+        ollama_model = None
+        ollama_base_url = None
+        ollama_timeout = None
+        ollama_num_predict = None
+        gemini_model = None
+        gemini_api_key = None
+        gemini_timeout = None
+        gemini_max_output_tokens = None
+        try:
+            from src.gemini_client import load_gemini_settings
+            from src.ollama_client import list_ollama_models, load_ollama_settings
+
+            ollama_settings = load_ollama_settings()
+            gemini_settings = load_gemini_settings()
+            if gemini_settings.enabled:
+                default_provider_label = "Gemini API"
+            elif ollama_settings.enabled:
+                default_provider_label = "Ollama"
+            else:
+                default_provider_label = "추출형만"
+
+            with st.expander("⚙️ 모델 설정", expanded=True):
+                provider_label = st.selectbox(
+                    "답변 생성 방식",
+                    options=["추출형만", "Ollama", "Gemini API"],
+                    index=["추출형만", "Ollama", "Gemini API"].index(default_provider_label),
+                    help="LLM은 검색된 공지/학사일정 근거만 받아 문장화합니다. 실패하면 추출형 답변으로 자동 전환됩니다.",
+                )
+                use_llm = provider_label != "추출형만"
+                llm_provider = {"Ollama": "ollama", "Gemini API": "gemini"}.get(provider_label)
+
+                if provider_label == "Ollama":
+                    ollama_base_url = st.text_input(
+                        "Ollama URL",
+                        value=ollama_settings.base_url,
+                        help="기본값은 로컬 Ollama 서버(http://localhost:11434)입니다.",
+                    )
+                    installed_models = list_ollama_models(ollama_base_url)
+                    default_model = ollama_settings.model
+                    if installed_models:
+                        if default_model not in installed_models:
+                            installed_models = [default_model, *installed_models]
+                        selected_model = st.selectbox(
+                            "설치된 Ollama 모델",
+                            options=installed_models,
+                            index=installed_models.index(default_model),
+                            help="Ollama에 설치된 모델 목록입니다. 아래 입력칸에서 직접 다른 태그로 수정할 수도 있습니다.",
+                        )
+                    else:
+                        selected_model = default_model
+                        st.caption("Ollama 모델 목록을 읽지 못했습니다. 모델명을 직접 입력하세요.")
+                    ollama_model = st.text_input("Ollama 모델명 직접 수정", value=selected_model)
+                    with st.expander("Ollama 고급 설정"):
+                        ollama_num_predict = st.number_input(
+                            "Ollama 최대 생성 토큰",
+                            min_value=64,
+                            max_value=2048,
+                            value=int(ollama_settings.num_predict),
+                            step=64,
+                        )
+                        ollama_timeout = st.number_input(
+                            "Ollama 응답 제한 시간(초)",
+                            min_value=5,
+                            max_value=300,
+                            value=int(ollama_settings.timeout),
+                            step=5,
+                        )
+                    st.caption(f"현재 사용 모델: `{ollama_model}`")
+
+                elif provider_label == "Gemini API":
+                    gemini_model = st.text_input(
+                        "Gemini 모델명",
+                        value=gemini_settings.model,
+                        help="예: gemini-2.5-flash. 환경변수 KD_NOTICE_GEMINI_MODEL/GEMINI_MODEL로도 설정할 수 있습니다.",
+                    )
+                    gemini_api_key = st.text_input(
+                        "Gemini API 키",
+                        value="",
+                        type="password",
+                        placeholder="비워두면 GEMINI_API_KEY / GOOGLE_API_KEY 환경변수 사용",
+                        help="입력한 키는 현재 실행 중인 요청에만 전달하고 파일에 저장하지 않습니다.",
+                    )
+                    with st.expander("Gemini 고급 설정"):
+                        gemini_max_output_tokens = st.number_input(
+                            "Gemini 최대 생성 토큰",
+                            min_value=64,
+                            max_value=4096,
+                            value=int(gemini_settings.max_output_tokens),
+                            step=64,
+                        )
+                        gemini_timeout = st.number_input(
+                            "Gemini 응답 제한 시간(초)",
+                            min_value=5,
+                            max_value=300,
+                            value=int(gemini_settings.timeout),
+                            step=5,
+                        )
+                    key_state = "입력 키 사용" if gemini_api_key else ("환경변수 키 사용" if gemini_settings.api_key else "키 없음")
+                    st.caption(f"현재 사용 모델: `{gemini_model}` · API 키: {key_state}")
+                else:
+                    st.caption("LLM 없이 검색된 근거를 추출형으로 답변합니다.")
+        except Exception:
+            use_llm = False
+            llm_provider = None
+            st.caption("AI 모델 설정을 읽지 못해 추출형 답변만 사용합니다.")
 
     if not rows:
         st.info("아직 수집된 공지 데이터가 없습니다. 사이드바의 데이터셋 새로고침을 실행하거나 `python scripts/build_dataset.py`를 먼저 실행하세요.")
@@ -275,8 +481,26 @@ def render_app() -> None:
     if question:
         st.chat_message("user").write(question)
         with st.chat_message("assistant"):
+            motion_slot = st.empty()
             with st.spinner("공지 데이터에서 근거를 검색하는 중..."):
-                answer, sources = build_answer(question, rows)
+                try:
+                    render_thinking_motion(motion_slot)
+                    answer, sources = build_answer(
+                        question,
+                        rows,
+                        use_llm=use_llm,
+                        llm_provider=llm_provider,
+                        ollama_model=ollama_model,
+                        ollama_base_url=ollama_base_url,
+                        ollama_timeout=ollama_timeout,
+                        ollama_num_predict=ollama_num_predict,
+                        gemini_model=gemini_model,
+                        gemini_api_key=gemini_api_key,
+                        gemini_timeout=gemini_timeout,
+                        gemini_max_output_tokens=gemini_max_output_tokens,
+                    )
+                finally:
+                    motion_slot.empty()
             st.markdown("### 답변")
             if answer.startswith(UNKNOWN_MESSAGE):
                 st.warning(answer)

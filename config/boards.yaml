@@ -25,8 +25,15 @@ boards:
     label: 채용공지
     category: 경동알림
     url: https://www.kduniv.ac.kr/kor/CMS/Board/Board.do?mCode=MN287
+schedules:
+  - id: academic_calendar
+    label: 학사일정
+    category: 학사일정
+    url: https://www.kduniv.ac.kr/kor/CMS/ScheduleMgr/YearList.do?mCode=MN096
 crawler:
-  max_pages_per_board: 1
+  # 기본 수집량: 6개 게시판 × 게시판별 최대 3페이지.
+  # 앱 사이드바 또는 scripts/build_dataset.py --max-pages 로 일회성 조정 가능.
+  max_pages_per_board: 3
   request_timeout_seconds: 12
   polite_delay_seconds: 0.25
   user_agent: "KDUniversityNoticeRAGDemo/0.1 (+local competition demo; public pages only)"

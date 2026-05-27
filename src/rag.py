@@ -13,6 +13,7 @@ import math
 import os
 import re
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -24,6 +25,23 @@ KOREAN_CATEGORY_TERMS = {
     "채용": ("채용", "모집", "인턴", "취업", "공고"),
     "등록": ("등록", "등록금", "납부", "분납"),
 }
+ACADEMIC_SCHEDULE_TERMS = (
+    "학사일정",
+    "일정",
+    "언제",
+    "기간",
+    "수강신청",
+    "기말고사",
+    "중간고사",
+    "계절학기",
+    "개강",
+    "종강",
+    "복학",
+    "휴학",
+    "등록기간",
+    "성적",
+    "졸업",
+)
 
 
 def normalize_text(value: Any) -> str:
@@ -61,6 +79,8 @@ def _first_sentence_with_terms(text: str, terms: Sequence[str], max_chars: int =
     clean = normalize_text(text)
     if not clean:
         return ""
+    if "학사일정:" in clean:
+        return clean[:max_chars]
     sentences = re.split(r"(?<=[.!?。！？])\s+|\n+", clean)
     lowered_terms = [term.lower() for term in terms if term]
     for sentence in sentences:
@@ -69,6 +89,33 @@ def _first_sentence_with_terms(text: str, terms: Sequence[str], max_chars: int =
         if any(term in lower for term in lowered_terms):
             return sentence_clean[:max_chars]
     return clean[:max_chars]
+
+
+def _date_sort_value(value: str) -> date:
+    match = re.search(r"(20\d{2})[-./년\s]*(\d{1,2})?[-./월\s]*(\d{1,2})?", value or "")
+    if not match:
+        return date.min
+    year = int(match.group(1))
+    month = int(match.group(2) or 1)
+    day = int(match.group(3) or 1)
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return date.min
+
+
+def _is_academic_schedule_query(query: str) -> bool:
+    return any(term in query for term in ACADEMIC_SCHEDULE_TERMS)
+
+
+def _upcoming_date_key(value: str) -> tuple[int, int]:
+    parsed = _date_sort_value(value)
+    if parsed == date.min:
+        return (2, 0)
+    today = date.today()
+    if parsed >= today:
+        return (0, parsed.toordinal())
+    return (1, -parsed.toordinal())
 
 
 def load_records(path: str | Path) -> list[dict[str, str]]:
@@ -169,15 +216,41 @@ class NoticeRetriever:
         tfidf_scores = self._tfidf_scores(query_clean)
 
         scored: list[tuple[float, int]] = []
+        is_schedule_query = _is_academic_schedule_query(query_clean)
         for idx, record in enumerate(self.records):
             score = self._lexical_score(query_clean, query_tokens, idx)
             if tfidf_scores:
                 score = (score * 0.65) + (tfidf_scores[idx] * 0.35)
             score += self._metadata_boost(query_clean, record)
+            if record.get("source_board") == "학사일정" and not is_schedule_query:
+                score -= 0.16
             if score >= threshold:
                 scored.append((score, idx))
 
-        scored.sort(key=lambda item: (-item[0], self.records[item[1]].get("date", ""), self.records[item[1]].get("title", "")))
+        if any(term in query_clean for term in ("최근", "최신")):
+            scored.sort(
+                key=lambda item: (
+                    -_date_sort_value(self.records[item[1]].get("date", "")).toordinal(),
+                    -item[0],
+                    self.records[item[1]].get("title", ""),
+                )
+            )
+        elif is_schedule_query:
+            scored.sort(
+                key=lambda item: (
+                    -item[0],
+                    _upcoming_date_key(self.records[item[1]].get("date", "")),
+                    self.records[item[1]].get("title", ""),
+                )
+            )
+        else:
+            scored.sort(
+                key=lambda item: (
+                    -item[0],
+                    -_date_sort_value(self.records[item[1]].get("date", "")).toordinal(),
+                    self.records[item[1]].get("title", ""),
+                )
+            )
         results: list[RetrievedNotice] = []
         query_terms = list(query_tokens) + [query_clean]
         for rank, (score, idx) in enumerate(scored[:top_k], start=1):

@@ -25,12 +25,21 @@ class BoardConfig:
     url: str
 
 
-def load_config(path: Path) -> tuple[list[BoardConfig], dict[str, Any]]:
+@dataclass(frozen=True)
+class ScheduleConfig:
+    id: str
+    label: str
+    category: str
+    url: str
+
+
+def load_config(path: Path) -> tuple[list[BoardConfig], list[ScheduleConfig], dict[str, Any]]:
     with path.open(encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
     boards = [BoardConfig(**item) for item in raw.get("boards", [])]
+    schedules = [ScheduleConfig(**item) for item in raw.get("schedules", [])]
     crawler = raw.get("crawler", {}) or {}
-    return boards, crawler
+    return boards, schedules, crawler
 
 
 class CrawlLogger:
@@ -94,6 +103,18 @@ class NoticeCrawler:
                         self.logger.log("detail_page", board_id=board.id, url=item["url"], status="partial", title=item["title"], error=str(exc))
         return records
 
+    def crawl_schedule(self, schedule: ScheduleConfig) -> list[NoticeRecord]:
+        try:
+            html = self.fetch(schedule.url)
+            items = parse_schedule_page(html, schedule.url, schedule)
+            if self.logger:
+                self.logger.log("schedule_page", schedule_id=schedule.id, schedule_label=schedule.label, url=schedule.url, status="ok", item_count=len(items))
+        except Exception as exc:  # pragma: no cover - network failure path
+            if self.logger:
+                self.logger.log("schedule_page", schedule_id=schedule.id, schedule_label=schedule.label, url=schedule.url, status="error", error=str(exc))
+            return []
+        return [NoticeRecord(**item) for item in items]
+
 
 def with_page(url: str, page: int) -> str:
     if page <= 1:
@@ -153,8 +174,58 @@ def parse_detail_page(html: str) -> str:
     return ""
 
 
+def _schedule_year(soup: BeautifulSoup) -> int:
+    year_node = soup.select_one(".sch-date .year")
+    if year_node:
+        year_text = clean_text(year_node.get_text(" "))
+        if year_text.isdigit():
+            return int(year_text)
+    match = re.search(r"(20\d{2})\s*년", soup.get_text(" ", strip=True))
+    if match:
+        return int(match.group(1))
+    return datetime.now().year
+
+
+def _schedule_start_date(year: int, date_text: str) -> str:
+    match = re.search(r"(\d{1,2})\.\s*(\d{1,2})", date_text)
+    if not match:
+        return f"{year}-01-01"
+    month = int(match.group(1))
+    day = int(match.group(2))
+    return f"{year:04d}-{month:02d}-{day:02d}"
+
+
+def parse_schedule_page(html: str, page_url: str, schedule: ScheduleConfig) -> list[dict[str, str]]:
+    """Parse KD University yearly academic schedule entries into RAG rows."""
+    soup = BeautifulSoup(html, "html.parser")
+    year = _schedule_year(soup)
+    records: list[dict[str, str]] = []
+    for item in soup.select("li.daily-li"):
+        date_node = item.select_one(".date-core")
+        body_node = item.select_one(".body-core")
+        date_text = clean_text(date_node.get_text(" ") if date_node else "")
+        body_text = clean_text(body_node.get_text(" ") if body_node else "")
+        if not date_text or not body_text:
+            continue
+        start_date = _schedule_start_date(year, date_text)
+        title = f"{body_text} ({date_text})"
+        records.append(
+            {
+                "title": title,
+                "category": schedule.category,
+                "date": start_date,
+                "url": page_url,
+                "source_board": schedule.label,
+                "content_or_snippet": f"{year}년 학사일정: {date_text} {body_text}",
+                "writer": "",
+                "board_id": schedule.id,
+            }
+        )
+    return records
+
+
 def crawl_from_config(config_path: Path, data_dir: Path, *, max_pages_override: int | None = None) -> list[NoticeRecord]:
-    boards, options = load_config(config_path)
+    boards, schedules, options = load_config(config_path)
     logger = CrawlLogger(data_dir / "crawl_log.jsonl")
     crawler = NoticeCrawler(
         timeout=float(options.get("request_timeout_seconds", 12)),
@@ -164,10 +235,14 @@ def crawl_from_config(config_path: Path, data_dir: Path, *, max_pages_override: 
     )
     max_pages = int(max_pages_override or options.get("max_pages_per_board", 1))
     all_records: list[NoticeRecord] = []
-    logger.log("crawl_start", board_count=len(boards), max_pages_per_board=max_pages)
+    logger.log("crawl_start", board_count=len(boards), schedule_count=len(schedules), max_pages_per_board=max_pages)
     for board in boards:
         records = crawler.crawl_board(board, max_pages=max_pages)
         all_records.extend(records)
         logger.log("board_complete", board_id=board.id, board_label=board.label, records=len(records))
+    for schedule in schedules:
+        records = crawler.crawl_schedule(schedule)
+        all_records.extend(records)
+        logger.log("schedule_complete", schedule_id=schedule.id, schedule_label=schedule.label, records=len(records))
     logger.log("crawl_complete", total_records=len(all_records))
     return all_records

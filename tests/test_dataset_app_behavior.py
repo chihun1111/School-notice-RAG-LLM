@@ -3,14 +3,14 @@ import unittest
 from pathlib import Path
 
 try:
-    from src.crawler import BoardConfig, parse_list_page, with_page
+    from src.crawler import BoardConfig, ScheduleConfig, parse_list_page, parse_schedule_page, with_page
 except ModuleNotFoundError as exc:  # optional crawler dependencies may be absent before pip install
-    BoardConfig = parse_list_page = with_page = None
+    BoardConfig = ScheduleConfig = parse_list_page = parse_schedule_page = with_page = None
     CRAWLER_IMPORT_ERROR = exc
 else:
     CRAWLER_IMPORT_ERROR = None
 from src.dataset import deduplicate, validate_records, write_outputs
-from app import build_answer, dataset_summary, fallback_retrieve, run_dataset_refresh
+from app import build_answer, dataset_summary, fallback_retrieve, render_thinking_motion, run_dataset_refresh
 
 
 VALID_RECORDS = [
@@ -74,6 +74,21 @@ class DatasetAndAppBehaviorTests(unittest.TestCase):
         self.assertEqual(with_page(url, 1), url)
         self.assertIn("page=2", with_page(url, 2))
 
+    @unittest.skipIf(CRAWLER_IMPORT_ERROR is not None, "crawler optional dependencies not installed")
+    def test_parse_schedule_page_uses_notice_compatible_schema(self):
+        html = """
+        <h3 class="sch-date"><em class="year">2026</em>년</h3>
+        <ol class="daily-ol"><li class="daily-li">
+          <div class="date-core">07. 13(월) ∼ 07. 17(금)</div>
+          <div class="body-core">수강신청기간(2학기)</div>
+        </li></ol>
+        """
+        schedule = ScheduleConfig(id="academic_calendar", label="학사일정", category="학사일정", url="https://example.edu/schedule")
+        rows = parse_schedule_page(html, schedule.url, schedule)
+        self.assertEqual(rows[0]["date"], "2026-07-13")
+        self.assertEqual(rows[0]["source_board"], "학사일정")
+        self.assertIn("수강신청기간", rows[0]["title"])
+
     def test_dataset_summary_reports_missing_fields_only_when_rows_exist(self):
         self.assertEqual(dataset_summary([])["missing_fields"], [])
         summary = dataset_summary([dict(VALID_RECORDS[0], date="")])
@@ -97,6 +112,22 @@ class DatasetAndAppBehaviorTests(unittest.TestCase):
         # The app exposes refresh as a separate callable; answer construction above
         # does not call this function or the crawler.
         self.assertTrue(callable(run_dataset_refresh))
+
+    def test_render_thinking_motion_outputs_animated_status(self):
+        class DummyTarget:
+            def __init__(self):
+                self.html = ""
+                self.unsafe = False
+
+            def markdown(self, html, unsafe_allow_html=False):
+                self.html = html
+                self.unsafe = unsafe_allow_html
+
+        target = DummyTarget()
+        render_thinking_motion(target)
+        self.assertIn("근거 검색하고 생각 중", target.html)
+        self.assertIn("thinking-bounce", target.html)
+        self.assertTrue(target.unsafe)
 
 
 if __name__ == "__main__":
