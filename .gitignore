@@ -4,8 +4,8 @@ __pycache__/
 *.pyc
 .env
 .env.*
-# OMX volatile runtime state/logs
-.omx/state/
-.omx/logs/
-.omx/metrics.json
-.omx/tmux-hook.json
+# OMX runtime/planning artifacts
+.omx/
+
+# Ignore the ignore file itself if users customize it locally
+.gitignore
