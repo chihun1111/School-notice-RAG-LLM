@@ -185,6 +185,8 @@ def answer_question(
     gemini_base_url: str | None = None,
     gemini_timeout: float | None = None,
     gemini_max_output_tokens: int | None = None,
+    gemini_thinking_budget: int | None = None,
+    gemini_thinking_level: str | None = None,
 ) -> dict[str, Any]:
     """Return a grounded answer payload for the UI.
 
@@ -220,6 +222,8 @@ def answer_question(
         base_url=gemini_base_url,
         timeout=gemini_timeout,
         max_output_tokens=gemini_max_output_tokens,
+        thinking_budget=gemini_thinking_budget,
+        thinking_level=gemini_thinking_level,
     )
     if provider_name == "gemini" and gemini_settings.enabled:
         try:

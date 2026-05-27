@@ -4,7 +4,7 @@
 
 ## 핵심 기능
 
-- `config/boards.yaml`에 등록된 6개 공개 공지 URL과 학사일정 페이지 1개만 수집합니다.
+- `config/boards.yaml`에 등록된 공개 공지 URL과 학사일정 페이지만 수집합니다. 앱 설정창에서 이후 크롤링할 URL을 추가/삭제할 수 있습니다.
 - `scripts/build_dataset.py`를 직접 실행할 때만 크롤링합니다. 채팅 중 자동/상시 크롤링은 하지 않습니다.
 - 공지 데이터는 `data/notices.csv`, `data/notices.jsonl`, `data/crawl_log.jsonl`로 저장됩니다.
 - 한국어 질의를 위해 문자 n-gram/키워드, 카테고리/연도 부스트를 결합해 검색합니다. TF-IDF는 `KD_NOTICE_ENABLE_TFIDF=1`일 때만 선택적으로 사용합니다.
@@ -40,6 +40,15 @@ python scripts/build_dataset.py --max-pages 5
 
 30건 미만으로 수집되면 실제 사이트 구조나 게시글 노출 제한을 `crawl_log.jsonl`에서 확인합니다. 실제 공지처럼 보이는 가짜 데이터는 넣지 않습니다.
 
+### 크롤링 URL 관리
+
+앱 우측 상단 `⋯` 설정창의 **크롤링 URL 관리**에서 공지 게시판/학사일정 URL을 추가하거나 삭제할 수 있습니다.
+
+- 변경 내용은 `config/boards.yaml`에 저장됩니다.
+- 저장만으로 현재 CSV/JSONL이 바로 바뀌지는 않습니다. 삭제한 URL의 기존 공지도 새로고침 전까지는 현재 데이터셋에서 답변될 수 있습니다.
+- `데이터셋 새로고침`을 실행하면 등록된 URL 목록 기준으로 `data/notices.csv`, `data/notices.jsonl`, `data/crawl_log.jsonl`이 다시 생성됩니다.
+- 보안과 파서 안정성을 위해 앱은 현재 경동대학교 공개 도메인(`www.kduniv.ac.kr`)의 `Board.do?mCode=...` 게시판 목록 URL과 `ScheduleMgr/YearList.do?mCode=...` 학사일정 URL만 저장합니다.
+
 ## 앱 실행
 
 ```bash
@@ -49,7 +58,7 @@ streamlit run app.py
 앱에서 확인할 항목:
 
 1. 데이터셋 상태와 레코드 수가 보이는지 확인
-2. 필요하면 사이드바에서 `보드별 크롤링 페이지 수`를 조정한 뒤 `데이터셋 새로고침`
+2. 필요하면 우측 상단 `⋯` 설정창에서 크롤링 URL을 추가/삭제하거나 `보드별 크롤링 페이지 수`를 조정한 뒤 `데이터셋 새로고침`
 3. 추천 질문 버튼 또는 직접 질문 입력
 4. 답변 카드에 출처, 날짜, 원문 링크, 근거 스니펫이 표시되는지 확인
 5. 무관한 질문에는 안전한 미확인 답변이 나오는지 확인
@@ -85,7 +94,16 @@ export KD_NOTICE_GEMINI_MODEL=gemini-2.5-flash
 streamlit run app.py
 ```
 
-앱 사이드바의 **AI 답변 생성** 설정에서 `추출형만`, `Ollama`, `Gemini API` 중 선택하고 모델명을 직접 수정할 수 있습니다. Gemini API 키는 사이드바 비밀번호 입력칸에 넣거나 `GEMINI_API_KEY` / `GOOGLE_API_KEY` 환경변수로 설정합니다.
+앱 우측 상단 `⋯` 설정창의 **AI 답변 생성** 설정에서 `추출형만`, `Ollama`, `Gemini API` 중 선택할 수 있습니다. Gemini는 직접 입력 대신 선택 목록을 제공합니다. API 키가 있으면 Gemini 모델 목록 API로 실제 `generateContent` 가능 모델을 확인하고, 키가 없으면 공식 문서 기준 추천 모델을 표시합니다.
+
+Gemini 선택 목록에는 텍스트 RAG에 맞는 다음 계열이 포함됩니다.
+
+- 최신/무료 우선: `gemini-3.5-flash`
+- 미리보기: `gemini-3-flash-preview`, `gemini-3.1-flash-lite-preview`, `gemini-3.1-pro-preview`
+- 경량/고속: `gemini-3.1-flash-lite`, `gemini-2.5-flash-lite`, `gemini-2.0-flash-lite`
+- 안정/호환: `gemini-2.5-flash`, `gemini-2.5-pro`, `gemini-2.0-flash`
+
+선택한 모델에 맞춰 최대 생성 토큰과 thinking 설정을 자동 조정합니다. Gemini 2.5는 `thinkingBudget`, Gemini 3 계열은 `thinkingLevel`을 사용하고, 2.0 계열은 별도 thinking 설정을 보내지 않습니다. Gemini API 키는 설정창 비밀번호 입력칸에 넣거나 `GEMINI_API_KEY` / `GOOGLE_API_KEY` 환경변수로 설정합니다.
 
 지원 환경 변수:
 
@@ -101,6 +119,8 @@ streamlit run app.py
 - `KD_NOTICE_GEMINI_TIMEOUT` — 요청 제한 시간(초), 기본값 `30`
 - `KD_NOTICE_GEMINI_TEMPERATURE` — 생성 temperature, 기본값 `0.1`
 - `KD_NOTICE_GEMINI_MAX_OUTPUT_TOKENS` — 최대 생성 토큰, 기본값 `512`
+- `KD_NOTICE_GEMINI_THINKING_BUDGET` — Gemini 2.5 thinking budget, `-1`은 동적 thinking, `0`은 지원 모델에서 thinking 끄기
+- `KD_NOTICE_GEMINI_THINKING_LEVEL` — Gemini 3 thinking level, 예: `minimal`, `low`, `medium`, `high`
 
 ## 데모 질문 예시
 

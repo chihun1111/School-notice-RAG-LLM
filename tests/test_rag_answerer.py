@@ -208,6 +208,8 @@ class RagAnswererTests(unittest.TestCase):
                     llm_provider="gemini",
                     gemini_model="gemini-test",
                     gemini_api_key="ui-key",
+                    gemini_max_output_tokens=1536,
+                    gemini_thinking_budget=1024,
                 )
 
         self.assertTrue(payload["used_llm"])
@@ -224,7 +226,71 @@ class RagAnswererTests(unittest.TestCase):
         self.assertEqual(headers["x-goog-api-key"], "ui-key")
         self.assertEqual(request_payload["contents"][0]["role"], "user")
         self.assertIn("system_instruction", request_payload)
+        self.assertEqual(request_payload["generationConfig"]["maxOutputTokens"], 1536)
+        self.assertEqual(request_payload["generationConfig"]["thinkingConfig"]["thinkingBudget"], 1024)
         self.assertIn("아래 근거에 없는 내용은 추측하지 마세요", request_payload["contents"][0]["parts"][0]["text"])
+
+    def test_gemini_model_profiles_clamp_usage_settings(self):
+        from src.gemini_client import get_gemini_model_profiles, load_gemini_settings, with_gemini_overrides
+
+        profiles = get_gemini_model_profiles()
+        self.assertIn("gemini-3.5-flash", [profile.code for profile in profiles])
+        self.assertIn("gemini-2.0-flash", [profile.code for profile in profiles])
+        self.assertIn("gemini-2.5-pro", [profile.code for profile in profiles])
+        settings = with_gemini_overrides(
+            load_gemini_settings(use_llm=True, provider="gemini"),
+            model="gemini-2.5-pro",
+            max_output_tokens=999999,
+            thinking_budget=0,
+        )
+        self.assertEqual(settings.model, "gemini-2.5-pro")
+        self.assertEqual(settings.max_output_tokens, 65536)
+        self.assertEqual(settings.thinking_budget, 128)
+
+    def test_gemini_3_models_use_thinking_level_not_budget(self):
+        class FakeGeminiResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"candidates": [{"content": {"parts": [{"text": "Gemini 3 답변"}]}}]}
+
+        results = search_notices(RECORDS, "장학금 신청", top_k=1)
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "env-key"}, clear=False):
+            with patch("src.gemini_client.requests.post", return_value=FakeGeminiResponse()) as mocked_post:
+                payload = answer_question(
+                    "장학금 신청",
+                    results,
+                    use_llm=True,
+                    llm_provider="gemini",
+                    gemini_model="gemini-3.5-flash",
+                    gemini_thinking_level="low",
+                )
+
+        self.assertTrue(payload["used_llm"])
+        request_payload = mocked_post.call_args.kwargs["json"]
+        self.assertEqual(request_payload["generationConfig"]["thinkingConfig"], {"thinkingLevel": "low"})
+
+    def test_gemini_list_models_filters_generate_content_models(self):
+        from src.gemini_client import list_gemini_models
+
+        class FakeListResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "models": [
+                        {"name": "models/gemini-3.5-flash", "supportedGenerationMethods": ["generateContent"]},
+                        {"name": "models/embedding-only", "supportedGenerationMethods": ["embedContent"]},
+                    ]
+                }
+
+        with patch("src.gemini_client.requests.get", return_value=FakeListResponse()) as mocked_get:
+            models = list_gemini_models("api-key")
+
+        self.assertEqual(models, ["gemini-3.5-flash"])
+        self.assertEqual(mocked_get.call_args.kwargs["headers"]["x-goog-api-key"], "api-key")
 
     def test_gemini_failure_falls_back_to_extractive_answer(self):
         from requests import RequestException

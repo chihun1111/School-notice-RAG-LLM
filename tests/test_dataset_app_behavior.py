@@ -10,7 +10,17 @@ except ModuleNotFoundError as exc:  # optional crawler dependencies may be absen
 else:
     CRAWLER_IMPORT_ERROR = None
 from src.dataset import deduplicate, validate_records, write_outputs
-from app import build_answer, dataset_summary, fallback_retrieve, render_thinking_motion, run_dataset_refresh
+from app import (
+    add_crawl_source,
+    build_answer,
+    dataset_summary,
+    delete_crawl_source,
+    fallback_retrieve,
+    load_crawl_config,
+    render_thinking_motion,
+    run_dataset_refresh,
+    save_crawl_config,
+)
 
 
 VALID_RECORDS = [
@@ -112,6 +122,58 @@ class DatasetAndAppBehaviorTests(unittest.TestCase):
         # The app exposes refresh as a separate callable; answer construction above
         # does not call this function or the crawler.
         self.assertTrue(callable(run_dataset_refresh))
+
+    def test_editable_crawl_sources_are_saved_and_deduplicated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "boards.yaml"
+            config = {"boards": [], "schedules": [], "crawler": {"max_pages_per_board": 2}}
+            updated = add_crawl_source(
+                config,
+                "boards",
+                label="국제공지",
+                category="경동알림",
+                url="https://www.kduniv.ac.kr/kor/CMS/Board/Board.do?mCode=MN999#source-list",
+            )
+            self.assertEqual(updated["boards"][0]["label"], "국제공지")
+            self.assertEqual(updated["boards"][0]["url"], "https://www.kduniv.ac.kr/kor/CMS/Board/Board.do?mCode=MN999")
+            with self.assertRaisesRegex(ValueError, "이미 등록"):
+                add_crawl_source(updated, "boards", label="중복", category="경동알림", url="https://www.kduniv.ac.kr/kor/CMS/Board/Board.do?mCode=MN999")
+
+            save_crawl_config(updated, config_path)
+            reloaded = load_crawl_config(config_path)
+            self.assertEqual(reloaded["boards"][0]["url"], "https://www.kduniv.ac.kr/kor/CMS/Board/Board.do?mCode=MN999")
+            self.assertEqual(reloaded["crawler"]["max_pages_per_board"], 2)
+
+            removed = delete_crawl_source(reloaded, "boards", reloaded["boards"][0]["id"])
+            save_crawl_config(removed, config_path)
+            reloaded_after_delete = load_crawl_config(config_path)
+            self.assertEqual(removed["boards"], [])
+            self.assertEqual(reloaded_after_delete["boards"], [])
+
+    def test_editable_crawl_sources_reject_unsupported_or_internal_urls(self):
+        config = {"boards": [], "schedules": [], "crawler": {}}
+        invalid_cases = [
+            ("boards", "http://localhost:8000/kor/CMS/Board/Board.do?mCode=MN999"),
+            ("boards", "http://127.0.0.1/kor/CMS/Board/Board.do?mCode=MN999"),
+            ("boards", "http://169.254.169.254/latest/meta-data"),
+            ("boards", "https://example.edu/kor/CMS/Board/Board.do?mCode=MN999"),
+            ("boards", "https://www.kduniv.ac.kr/kor/CMS/Board/Board.do?mCode=MN999&mode=view"),
+            ("schedules", "https://www.kduniv.ac.kr/kor/CMS/Board/Board.do?mCode=MN999"),
+            ("boards", "https://www.kduniv.ac.kr/kor/CMS/ScheduleMgr/YearList.do?mCode=MN096"),
+        ]
+        for group, url in invalid_cases:
+            with self.subTest(group=group, url=url):
+                with self.assertRaises(ValueError):
+                    add_crawl_source(config, group, label="테스트", category="테스트", url=url)
+
+        valid_schedule = add_crawl_source(
+            config,
+            "schedules",
+            label="학사일정",
+            category="학사일정",
+            url="https://www.kduniv.ac.kr/kor/CMS/ScheduleMgr/YearList.do?mCode=MN096",
+        )
+        self.assertEqual(valid_schedule["schedules"][0]["label"], "학사일정")
 
     def test_render_thinking_motion_outputs_animated_status(self):
         class DummyTarget:
